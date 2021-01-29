@@ -104,8 +104,8 @@
  * 　商用利用や18禁作品での使用についてもまったく問題ありません。
  */
 
-(function () {
-    'use strict';
+'use strict';
+{
     const pluginName = 'FastMZ';
     const parameters = PluginManager.parameters(pluginName);
 
@@ -377,5 +377,4 @@
     };
     Game_Interpreter.prototype.executeCommand = fastExecuteCommand;
     */
-
-})();
+}

@@ -21,16 +21,26 @@
  * @type boolean
  * @text Eval to new Function
  *
+ * @base Fs
+ * @orderAfter Fs
+ *
  * @arg fastskip
  * @type boolean
  * @text IF,While,Jump...
  *
  * @help This plugin will speed up your game!
+ *
+ * // (C)2021 unaunagi
+ * This software is released under the MIT License.
+ * http://opensource.org/licenses/mit-license.php
  */
 /*:ja
  * @plugindesc FastMZ RPGツクールMZ高速化プラグイン
  * @target MZ
  * @author うなうなぎ
+ *
+ * @base Fs
+ * @orderAfter Fs
  *
  * @command set
  * @text FastMZによる高速化の設定
@@ -100,15 +110,23 @@
  *
  * ■利用規約
  *
- *  MITライセンスということ以外に制限はありません。
- *  商用利用や18禁作品での使用についてもまったく問題ありません。
+ * (C)2021 unaunagi
+ * This software is released under the MIT License.
+ * http://opensource.org/licenses/mit-license.php
+ *
+ * MITライセンスということ以外に制限はありません。
+ * 商用利用や18禁作品での使用についても当然問題ありません。
+ *
  */
 
-"use strict";
+("use strict");
 {
-  const pluginName = "FastMZ";
-  //const parameters = PluginManager.parameters(pluginName);
+  //import Fs.js
+  // eslint-disable-next-line no-undef
+  const { P, M, N, Z } = Fs;
+  const pluginName = Z.pluginName();
 
+  //有効
   let enableFastEval = true;
   let enableSkip = true;
 
@@ -131,12 +149,84 @@
     return f;
   };
 
-  //イベントコマンド・上級の「スクリプト」の高速化-------------------------------------------------------------
-  const _game_interpreter_command355 = Game_Interpreter.prototype.command355;
-  const fastCommand355 = function () {
-    if (!enableFastEval) {
-      _game_interpreter_command355.apply(this, arguments);
-    } else {
+  Z.redef(Game_Interpreter.prototype, (base) => ({
+    setup(list, event_id) {
+      base(this).setup(list, event_id);
+
+      //下準備だけは高速化無効の時でもやっておく必要がある
+      if ("_fastMZ_labelMap" in list) {
+        //list側に保存済みならそれを使う
+        //ラベル情報記録用。おそらくMapでやるのが一番速いはず
+        this.labelMap = list._fastMZ_labelMap;
+      } else {
+        const map = new Map();
+        const list = this._list;
+        const len = list.length;
+        let i = 0;
+        while (i < len) {
+          let command = list[i];
+          //ラベル記録用
+          if (command.code === 118) {
+            map.set(command.parameters[0], i);
+          }
+          i += 1;
+        }
+        list._fastMZ_labelMap = map;
+        this.labelMap = map;
+      }
+    },
+    command113() {
+      //ループからの脱出
+      if (!enableSkip) return base(this).command113();
+
+      const now = this._index;
+      const fastJumpPoint = this._list[now].fastJumpPoint;
+      if (fastJumpPoint !== undefined) {
+        this._index = fastJumpPoint;
+      } else {
+        let depth = 0;
+        while (this._index < this._list.length - 1) {
+          this._index++;
+          const command = this.currentCommand();
+          if (command.code === 112) {
+            depth++;
+          }
+          if (command.code === 413) {
+            if (depth > 0) {
+              depth--;
+            } else {
+              break;
+            }
+          }
+        }
+        this._list[now].fastJumpPoint = this._index;
+      }
+      return true;
+    },
+    command119(params) {
+      //ラベルジャンプの発動
+      if (!enableSkip) return base(this).command119(params);
+
+      const fastJumpPoint = this._list[this._index].fastJumpPoint;
+      if (fastJumpPoint !== undefined) {
+        const fastJump = this._list[this._index].fastJump;
+        for (const indent of fastJump) {
+          this._branch[indent] = null;
+        }
+        this._index = fastJumpPoint;
+      } else {
+        const labelName = params[0];
+        const jumpPoint = this.labelMap.get(labelName);
+        if (jumpPoint !== undefined) {
+          fastJumpTo(this, jumpPoint);
+        }
+      }
+      return true;
+    },
+    command355() {
+      //スクリプトイベント
+      if (!enableFastEval) return base(this).command355();
+
       //文字列の結合と評価は1度で十分なはず
       //ただしイベントの中身が動的に変わるようなプラグインだと競合しそう
       let cmd = this.currentCommand();
@@ -158,99 +248,60 @@
         this._index += cmd.skip_count;
       }
       cmd.compiled_function();
-    }
-    return true;
-  };
-  Game_Interpreter.prototype.command355 = fastCommand355;
+      return true;
+    },
+    command413() {
+      //ループ処理などで元に戻る時に使われる関数
+      if (!enableSkip) return base(this).command413();
 
-  //イベントコマンド・移動の「移動ルートの設定」の高速化-------------------------------------------------------------
-  const fastProcessMoveCommand = function (command) {
-    const gc = Game_Character;
-    const params = command.parameters;
-    if (enableFastEval && command.code == gc.ROUTE_SCRIPT) {
-      fastEval(params[0])();
-    } else {
-      _game_character_processMoveCommend.apply(this, arguments);
-    }
-  };
-  const _game_character_processMoveCommend =
-    Game_Character.prototype.processMoveCommand;
-  Game_Character.prototype.processMoveCommand = fastProcessMoveCommand;
-
-  //イベント中の分岐を高速化-------------------------------------------------------------
-  const fastSkipBranch = function () {
-    //スキップのたびに行き先を探すのは無駄な気がするので、1回調べたら後はそのまま
-    if (!enableSkip) {
-      _game_interpreter_skipBranch.apply(this, arguments);
-    }
-    let cmd = this.currentCommand();
-    if (cmd.skipTarget) {
-      this._index = cmd.skipTarget;
-    } else {
-      while (this._list[this._index + 1].indent > this._indent) {
-        this._index += 1;
+      const command = this.currentCommand();
+      const fastJumpPoint = command.fastJumpPoint;
+      if (fastJumpPoint !== undefined) {
+        this._index = fastJumpPoint;
+      } else {
+        do {
+          this._index -= 1;
+        } while (this.currentCommand().indent !== this._indent);
+        command.fastJumpPoint = this._index;
       }
-      cmd.skipTarget = this._index;
-    }
-  };
-  const _game_interpreter_skipBranch = Game_Interpreter.prototype.skipBranch;
-  Game_Interpreter.prototype.skipBranch = fastSkipBranch;
+      return true;
+    },
+    skipBranch() {
+      //ループ脱出などで汎用的に使われる処理のスキップ
+      //下方向に向かって、インデントが浅くなるところまで進む
+      //スキップのたびに行き先を探すのは無駄な気がするので、1回調べたら後はそのまま
+      if (!enableSkip) return base(this).skipBranch();
 
-  //ラベルジャンプ系の分岐を高速化-------------------------------------------------------------
-
-  //下準備
-  const _game_interpreter_setup = Game_Interpreter.prototype.setup;
-  //Game_Interpreter.prototype.setup = function (list, eventId) {
-  Game_Interpreter.prototype.setup = function (list) {
-    _game_interpreter_setup.apply(this, arguments);
-    //下準備だけは高速化無効の時でもやっておく必要がある
-    if ("_fastMZ_labelMap" in list) {
-      //list側に保存済みならそれを使う
-      //ラベル情報記録用。おそらくMapでやるのが一番速いはず
-      this.labelMap = list._fastMZ_labelMap;
-    } else {
-      const map = new Map();
-      const list = this._list;
-      const len = list.length;
-      let i = 0;
-      while (i < len) {
-        let command = list[i];
-        //ラベル記録用
-        if (command.code === 118) {
-          map.set(command.parameters[0], i);
+      let cmd = this.currentCommand();
+      if (cmd.skipTarget) {
+        this._index = cmd.skipTarget;
+      } else {
+        while (this._list[this._index + 1].indent > this._indent) {
+          this._index += 1;
         }
-        i += 1;
+        cmd.skipTarget = this._index;
       }
-      list._fastMZ_labelMap = map;
-      this.labelMap = map;
-    }
-  };
+    },
+  }));
 
-  // Jump to Label
-  const _game_interpreter_command119 = Game_Interpreter.prototype.command119;
-  Game_Interpreter.prototype.command119 = function (params) {
-    if (!enableSkip) {
-      return _game_interpreter_command119.apply(this, arguments);
-    }
-    const fastJumpPoint = this._list[this._index].fastJumpPoint;
-    if (fastJumpPoint !== undefined) {
-      const fastJump = this._list[this._index].fastJump;
-      for (const indent of fastJump) {
-        this._branch[indent] = null;
-      }
-      this._index = fastJumpPoint;
-    } else {
-      const labelName = params[0];
-      const jumpPoint = this.labelMap.get(labelName);
-      if (jumpPoint !== undefined) {
-        fastJumpTo(this, jumpPoint);
-        //this.jumpTo(jumpPoint);
-      }
-    }
-    return true;
-  };
+  Z.redef(Game_Character.prototype, (base) => ({
+    processMoveCommand(command) {
+      //イベントコマンド・移動の「移動ルートの設定」の高速化
+      if (!enableSkip) return base(this).processMoveCommand(command);
 
-  const fastJumpTo = function (intp, index) {
+      const gc = Game_Character;
+      const params = command.parameters;
+      if (command.code == gc.ROUTE_SCRIPT) {
+        fastEval(params[0])();
+        return true;
+      } else {
+        return base(this).processMoveCommand(command);
+      }
+    },
+  }));
+
+  //ラベルジャンプ用の補助関数
+  const fastJumpTo = (intp, index) => {
     const lastIndex = intp._index;
     const startIndex = Math.min(index, lastIndex);
     const endIndex = Math.max(index, lastIndex);
@@ -270,111 +321,4 @@
 
     intp._index = index;
   };
-
-  //ループ処理で元の位置に戻るのも高速化
-  const _game_interpreter_command413 = Game_Interpreter.prototype.command413;
-  const fastRepeat = function () {
-    if (enableSkip) {
-      const command = this.currentCommand();
-      const fastJumpPoint = command.fastJumpPoint;
-      if (fastJumpPoint !== undefined) {
-        this._index = fastJumpPoint;
-      } else {
-        do {
-          this._index -= 1;
-        } while (this.currentCommand().indent !== this._indent);
-        command.fastJumpPoint = this._index;
-      }
-      return true;
-    } else {
-      return _game_interpreter_command413.apply(this, arguments);
-    }
-  };
-  Game_Interpreter.prototype.command413 = fastRepeat;
-
-  // Break Loop
-  const _game_interpreter_command113 = Game_Interpreter.prototype.command113;
-  const fastBreakLoop = function () {
-    if (!enableSkip) {
-      return _game_interpreter_command113.apply(this, arguments);
-    }
-    const now = this._index;
-    const fastJumpPoint = this._list[now].fastJumpPoint;
-    if (fastJumpPoint !== undefined) {
-      this._index = fastJumpPoint;
-    } else {
-      let depth = 0;
-      while (this._index < this._list.length - 1) {
-        this._index++;
-        const command = this.currentCommand();
-        if (command.code === 112) {
-          depth++;
-        }
-        if (command.code === 413) {
-          if (depth > 0) {
-            depth--;
-          } else {
-            break;
-          }
-        }
-      }
-      this._list[now].fastJumpPoint = this._index;
-    }
-    return true;
-  };
-  Game_Interpreter.prototype.command113 = fastBreakLoop;
-
-  //イベント実行全体の高速化-------------------------------------------------------------
-  //特定のイベントに限って連続実行出来るようにする仕組み
-  //10%程度は速くなるけど、イベントの動作がおかしくなったりするので、要調整
-  /*
-      // unknown,comment,if,when,when cancel,else,loop,break,label,jump,switch,variable,self switch,unknown,Repeat Above,Script command
-      const allowEventList = [0, 108, 111, 402, 403, 411, 112, 113, 118, 119, 121, 122, 123, 412, 413, 355];
-      let allowEventFlag = new Array(1000).fill(false);
-      for (let a of allowEventList) {
-          allowEventFlag[a] = true;
-      }
-  
-      //高速化したイベント処理ルーチン
-      const _game_interpreter_executeCommand = Game_Interpreter.prototype.executeCommand;
-      const fastExecuteCommand = function () {
-          if (!$gameSwitches.value(enabledSwitch)) {
-              _game_interpreter_executeCommand.apply(this, arguments);
-          } else {
-              let command = this.currentCommand();
-              let i = 0;
-              while (i < 10000) {
-                  i += 1;
-                  if (command) {
-                      this._indent = command.indent;
-                      const methodName = "command" + command.code;
-                      if (typeof this[methodName] === "function") {
-                          if (!this[methodName](command.parameters)) {
-                              return false;
-                          }
-                      }
-                      this._index += 1;
-  
-                      command = this.currentCommand();
-                      if (command) {
-                          if (!allowEventFlag[command.code]) {
-                              //連続実行に対応してないコマンドが来てる
-                              break;
-                          }
-                      } else {
-                          //次が終端
-                          break;
-                      }
-                  } else {
-                      //終端
-                      this.terminate();
-                      break;
-                  }
-              }
-              //console.log("break point");
-          }
-          return true;
-      };
-      Game_Interpreter.prototype.executeCommand = fastExecuteCommand;
-      */
 }

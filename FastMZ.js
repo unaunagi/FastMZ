@@ -56,23 +56,6 @@
  * @text 条件分岐・ラベルジャンプ等の高速化
  * @desc フロー制御関係の処理を高速化します。コマンド数の多いイベント、ループ回数が多い場合に効果を発揮。
  *
- * @command timerstart
- * @text 処理時間の測定開始
- * @desc performance.now() を使った時間計測を始めます。
- *
- * @command timerstop
- * @text 処理時間の測定終了してメッセージ表示
- * @desc 測定時間をメッセージウィンドウに表示。メッセージ関係を改変するプラグインあると動かないかも。
- *
- * @command timerstop_string
- * @text 測定時間を指定した変数に記録
- * @desc 測定結果を文字列として変数に保存します。あとでまとめて表示したり、加工したい時用。
- *
- * @arg variable
- * @type variable
- * @text 保存用の変数を指定
- * @desc 測定結果を保存する変数を指定してください。
- *
  * @help 変数操作やスクリプトのイベントを色々高速化するプラグインです。
  *
  * 実際に使ってみて速度の確認がしやすいように、プラグインコマンドでONOFFできるようにしてあります。
@@ -148,38 +131,19 @@
   let enableFastEval = true;
   let enableSkip = true;
 
+  //プラグインコマンド---------------------------------------------------------------------------------
   //有効無効の設定
   PluginManager.registerCommand(pluginName, "set", (args) => {
     enableFastEval = P.parse(args["fasteval"], P.boolean);
     enableSkip = P.parse(args["fastskip"], P.boolean);
   });
-
-  //処理時間計測用
-  PluginManager.registerCommand(pluginName, "timerstart", () => {
-    timerStart();
-  });
-
-  //処理時間計測終了_メッセージ版
-  PluginManager.registerCommand(pluginName, "timerstop", function () {
-    //メッセージウィンドウの呼び出し
-    $gameMessage.add(String(timerStop()));
-    this.setWaitMode("message");
-  });
-
-  //処理時間計測終了_文字列版
-  //あとでまとめて表示するとかしたい時用
-  PluginManager.registerCommand(pluginName, "timerstop_string", (args) => {
-    const v = P.parse(args["variable"], P.withDefault(P.integer, 0));
-    if (v > 0) $gameVariables.setValue(v, String(timerStop()));
-  });
   //----------------------------------------------------------------------------------------------------
 
-  //処理速度測定用関数----------------------------------------------------------------------------------
-  let startTime = 0;
-  const timerStart = () => (startTime = performance.now());
-  const timerStop = () => performance.now() - startTime;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const timerStopConsole = () => console.log(performance.now() - startTime);
+  //各種prop--------------------------------------------------------------------------------------------
+  const labelProp = Z.extProp(null); //ラベルの場所を記録したMap。listごとにもたせる
+  const jumpProp = Z.extProp(null); //次の行き先を記録した整数。commandごとに
+  const jumpMatagiProp = Z.extProp([]); //インデントを超えて飛ぶ時に、リセットすべき場所を示した配列。commandごとに
+  const functionProp = Z.extProp(null); //スクリプトイベント用
   //----------------------------------------------------------------------------------------------------
 
   //evalの高速化------------------------------------------------------------------------------------
@@ -196,105 +160,55 @@
     return f;
   };
 
+  //Game_Interpreter
   Z.redef(Game_Interpreter.prototype, (base) => ({
-    setup(list, event_id) {
-      base(this).setup(list, event_id);
-
-      //下準備だけは高速化無効の時でもやっておく必要がある
-      if ("_fastMZ_labelMap" in list) {
-        //list側に保存済みならそれを使う
-        //ラベル情報記録用。おそらくMapでやるのが一番速いはず
-        this.labelMap = list._fastMZ_labelMap;
-      } else {
-        const map = new Map();
-        const list = this._list;
-        const len = list.length;
-        let i = 0;
-        while (i < len) {
-          let command = list[i];
-          //ラベル記録用
-          if (command.code === 118) {
-            map.set(command.parameters[0], i);
-          }
-          i += 1;
-        }
-        list._fastMZ_labelMap = map;
-        this.labelMap = map;
-      }
-    },
     command113() {
-      //ループからの脱出
+      //ループの中断
       if (!enableSkip) return base(this).command113();
 
-      const now = this._index;
-      const fastJumpPoint = this._list[now].fastJumpPoint;
-      if (fastJumpPoint !== void 0) {
-        this._index = fastJumpPoint;
-      } else {
-        let depth = 0;
-        while (this._index < this._list.length - 1) {
-          this._index++;
-          const command = this.currentCommand();
-          if (command.code === 112) {
-            depth++;
-          }
-          if (command.code === 413) {
-            if (depth > 0) {
-              depth--;
-            } else {
-              break;
-            }
-          }
-        }
-        this._list[now].fastJumpPoint = this._index;
-      }
+      this._index =
+        jumpProp.get(this.currentCommand()) ||
+        searchBreakPoint(this._index, this._list);
       return true;
     },
     command119(params) {
-      //ラベルジャンプの発動
+      //ラベルに向かってジャンプ！
       if (!enableSkip) return base(this).command119(params);
-
-      const fastJumpPoint = this._list[this._index].fastJumpPoint;
-      if (fastJumpPoint !== void 0) {
-        const fastJump = this._list[this._index].fastJump;
-        for (const indent of fastJump) {
-          this._branch[indent] = null;
-        }
-        this._index = fastJumpPoint;
-      } else {
-        const labelName = params[0];
-        const jumpPoint = this.labelMap.get(labelName);
-        if (jumpPoint !== void 0) {
-          fastJumpTo(this, jumpPoint);
-        }
+      const list = this._list;
+      const command = list[this._index];
+      //すでにジャンプ済みデータがあればそれを使う。なければ探す
+      const next =
+        jumpProp.get(command) ??
+        searchLabel(this._index, this._indent, list, params[0]);
+      //インデントまたぎの処理
+      for (const indent of jumpMatagiProp.get(command)) {
+        this._branch[indent] = null;
       }
+      this._index = next;
       return true;
     },
     command355() {
       //スクリプトイベント
       if (!enableFastEval) return base(this).command355();
-
       //文字列の結合と評価は1度で十分なはず
       //ただしイベントの中身が動的に変わるようなプラグインだと競合しそう
-      let cmd = this.currentCommand();
-      if (!cmd.evaluated) {
-        let cnt = 0;
-        let script = this.currentCommand().parameters[0] + "\n";
-        while (this.nextEventCode() === 655) {
-          this._index++;
-          cnt++;
-          script += this.currentCommand().parameters[0] + "\n";
-        }
-        //キャッシュにあればそれを使い、なければ新規作成
-        cmd.compiled_function = fastEval(script);
-        cmd.skip_count = cnt;
-        cmd.evaluated = true;
-      } else {
-        //すでに作ってある関数を流用する
-        //イベントを飛ばす処理だけはちゃんとやっておく
-        this._index += cmd.skip_count;
+      let command = this.currentCommand();
+      let next = jumpProp.get(command);
+      if (next !== null) {
+        functionProp.get(command)();
+        this._index = next;
+        return true;
       }
-      cmd.compiled_function();
+      //最初の1回
+      let script = this.currentCommand().parameters[0] + "\n";
+      while (this.nextEventCode() === 655) {
+        this._index++;
+        script += this.currentCommand().parameters[0] + "\n";
+      }
+      let f = fastEval(script);
+      f();
+      jumpProp.set(command, this._index);
+      functionProp.set(command, f);
       return true;
     },
     command413() {
@@ -302,16 +216,15 @@
       if (!enableSkip) return base(this).command413();
 
       const command = this.currentCommand();
-      const fastJumpPoint = command.fastJumpPoint;
-      if (fastJumpPoint !== void 0) {
-        this._index = fastJumpPoint;
-      } else {
-        do {
-          this._index -= 1;
-        } while (this.currentCommand().indent !== this._indent);
-        command.fastJumpPoint = this._index;
+      const next = jumpProp.get(command);
+      if (next !== void 0) {
+        this._index = next;
+        return true;
       }
-      return true;
+      do {
+        this._index -= 1;
+      } while (this.currentCommand().indent !== this._indent);
+      jumpProp.set(this._index);
     },
     skipBranch() {
       //ループ脱出などで汎用的に使われる、処理のスキップ
@@ -330,6 +243,7 @@
     },
   }));
 
+  //Game_Character
   Z.redef(Game_Character.prototype, (base) => ({
     processMoveCommand(command) {
       //イベントコマンド・移動の「移動ルートの設定」の高速化
@@ -346,25 +260,59 @@
     },
   }));
 
-  //ラベルジャンプ用の補助関数
-  const fastJumpTo = (intp, index) => {
-    const lastIndex = intp._index;
-    const startIndex = Math.min(index, lastIndex);
-    const endIndex = Math.max(index, lastIndex);
-    const fastJump = [];
-    let indent = intp._indent;
+  //113 ループの中断 補助関数
+  const searchBreakPoint = (now, list) => {
+    let depth = 0;
+    let i = now;
+    while (now < list.length - 1) {
+      i++;
+      if (list[i].code === 112) depth++;
+      if (list[i].code === 413) {
+        depth--;
+        if (depth <= 0) break;
+      }
+    }
+    jumpProp.set(list[now], i);
+    return i;
+  };
+
+  //ラベルジャンプの補助関数
+  //ラベル記録用のMapを作る（数が少ないなら配列が有利かもしれない）
+  const makeLabelMap = (list) => {
+    //command.codeが118の場合、ラベル名(parameters[0])とindexをペアにして記録
+    const map = new Map();
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].code === 118) {
+        map.set(list[i].parameters[0], i);
+      }
+    }
+    labelProp.set(list, map);
+    return map;
+  };
+
+  //ラベルジャンルの補助関数
+  const searchLabel = (lastIndex, nowIndent, list, labelName) => {
+    const command = list[lastIndex];
+
+    //記録がない場合
+    let map = labelProp.get(list) ?? makeLabelMap(list); //ラベルマップの取得(なければ作る)
+    const matagi = [];
+    let jumpPoint = map.get(labelName) ?? lastIndex + 1; //ラベルが存在しない時は次へ
+    const startIndex = Math.min(jumpPoint, lastIndex);
+    const endIndex = Math.max(jumpPoint, lastIndex);
+
+    let indent = nowIndent;
     for (let i = startIndex; i <= endIndex; i++) {
-      const newIndent = intp._list[i].indent;
+      const newIndent = list[i].indent;
       if (newIndent !== indent) {
-        intp._branch[indent] = null;
-        fastJump.push(indent);
+        matagi.push(indent);
         indent = newIndent;
       }
     }
-    //必要な処理を記録して、次回以降に備える
-    intp._list[intp._index].fastJumpPoint = index;
-    intp._list[intp._index].fastJump = fastJump;
+    //必要な処理を記録
+    jumpProp.set(command, jumpPoint);
+    jumpMatagiProp.set(command, matagi);
 
-    intp._index = index;
+    return jumpPoint;
   };
 }

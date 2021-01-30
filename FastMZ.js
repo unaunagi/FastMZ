@@ -140,106 +140,135 @@
   //----------------------------------------------------------------------------------------------------
 
   //各種prop--------------------------------------------------------------------------------------------
+  const evalProp = Z.extProp(null, true); //eval用の汎用キャッシュ。スクリプト文字列をキーにしたいので強いMapを採用
   const labelProp = Z.extProp(null); //ラベルの場所を記録したMap。listごとにもたせる
-  const jumpProp = Z.extProp(null); //次の行き先を記録した整数。commandごとに
-  const jumpMatagiProp = Z.extProp([]); //インデントを超えて飛ぶ時に、リセットすべき場所を示した配列。commandごとに
-  const functionProp = Z.extProp(null); //スクリプトイベント用
+  const commandProp = Z.extProp([null, null]); //[次の行き先整数、実行関数]の組。パラメータを追加すると関数に渡す。commandごとに
+  const skipProp = Z.extProp(null); //次の行き先を整数示す整数。commandごとに。skipBranch用
   //----------------------------------------------------------------------------------------------------
 
-  //evalの高速化------------------------------------------------------------------------------------
-  const fastEvalCache = new Map();
+  //evalの高速化
   const fastEval = (script) => {
-    //evalではなくnew Functionを使う
-    //一度生成済みの関数は捨てずに使い回す
+    //evalではなくnew Functionを使い、生成済みの関数は捨てずに使い回す
     //別の場所から呼ばれても、コードが一致してればOK
-    let f = fastEvalCache.get(script);
-    if (f === void 0) {
+    let f = evalProp.get(script);
+    if (f === null) {
       f = new Function(script);
-      fastEvalCache.set(script, f);
+      evalProp.set(script, f);
     }
     return f;
   };
+  globalThis.fastEval = fastEval; //外からでも使えるようにしてみる
 
   //Game_Interpreter
   Z.redef(Game_Interpreter.prototype, (base) => ({
+    executeCommand() {
+      if (!enableSkip) return base(this).executeCommand();
+
+      //前処理済みのコマンドを統一的に扱う
+      //指定した場所にジャンプして、指定したパラメータを関数に渡す
+      const [next, func, ...params] = commandProp.get(this.currentCommand());
+      if (next !== null) {
+        this._index = next + 1;
+        func?.(this, params);
+        return true;
+      }
+      //それ以外の場合は従来通りにコマンド実行
+      return base(this).executeCommand();
+    },
     command113() {
       //ループの中断
       if (!enableSkip) return base(this).command113();
 
-      this._index =
-        jumpProp.get(this.currentCommand()) ||
-        searchBreakPoint(this._index, this._list);
+      //commandProp対応
+      let depth = 0;
+      let i = this._index;
+      while (i < this._list.length - 1) {
+        i++;
+        if (this._list[i].code === 112) depth++;
+        if (this._list[i].code === 413) {
+          depth--;
+          if (depth <= 0) break;
+        }
+      }
+      commandProp.set(this._list[this._index], [i, null]);
+      this._index = i;
       return true;
     },
     command119(params) {
       //ラベルに向かってジャンプ！
       if (!enableSkip) return base(this).command119(params);
+
+      //commandProp対応
       const list = this._list;
       const command = list[this._index];
-      //すでにジャンプ済みデータがあればそれを使う。なければ探す
-      const next =
-        jumpProp.get(command) ??
-        searchLabel(this._index, this._indent, list, params[0]);
-      //インデントまたぎの処理
-      for (const indent of jumpMatagiProp.get(command)) {
-        this._branch[indent] = null;
+      const map = labelProp.get(list) ?? makeLabelMap(list); //ラベルマップの取得(なければ作る)
+      const matagi = [];
+      const next = map.get(params[0]);
+      if (next === void 0) {
+        //ラベルが存在しない時は次へ
+        commandProp.set(command, [this._index, null]);
+        return true;
       }
+      const startIndex = Math.min(next, this._index);
+      const endIndex = Math.max(next, this._index);
+      let indent = this._indent;
+      for (let i = startIndex; i <= endIndex; i++) {
+        const newIndent = list[i].indent;
+        if (newIndent !== indent) {
+          this._branch[indent] = null;
+          matagi.push(indent);
+          indent = newIndent;
+        }
+      }
+      commandProp.set(command, [next, matagiFunc, matagi]);
       this._index = next;
       return true;
     },
     command355() {
       //スクリプトイベント
       if (!enableFastEval) return base(this).command355();
-      //文字列の結合と評価は1度で十分なはず
-      //ただしイベントの中身が動的に変わるようなプラグインだと競合しそう
-      let command = this.currentCommand();
-      let next = jumpProp.get(command);
-      if (next !== null) {
-        functionProp.get(command)();
-        this._index = next;
-        return true;
-      }
-      //最初の1回
+
+      //commandProp対応
+      //文字列の結合と評価は1度だけにする
+      const command = this.currentCommand();
+      //最初の1回だけ。2回目からはcommandPropの中身が実行される
       let script = this.currentCommand().parameters[0] + "\n";
       while (this.nextEventCode() === 655) {
         this._index++;
         script += this.currentCommand().parameters[0] + "\n";
       }
-      let f = fastEval(script);
+      const f = fastEval(script);
       f();
-      jumpProp.set(command, this._index);
-      functionProp.set(command, f);
+      commandProp.set(command, [this._index, f]);
       return true;
     },
     command413() {
       //ループ処理などで元に戻る時に使われる関数
       if (!enableSkip) return base(this).command413();
 
+      //commandProp対応
       const command = this.currentCommand();
-      const next = jumpProp.get(command);
-      if (next !== void 0) {
-        this._index = next;
-        return true;
-      }
       do {
         this._index -= 1;
       } while (this.currentCommand().indent !== this._indent);
-      jumpProp.set(this._index);
+      commandProp.set(command, [this._index, null]);
     },
     skipBranch() {
       //ループ脱出などで汎用的に使われる、処理のスキップ
       //スキップのたびに行き先を探すのは無駄な気がするので、1回調べたら後はそのまま
+      //スキップするしないは毎回変わるけど、飛び先そのものは固定
       if (!enableSkip) return base(this).skipBranch();
 
-      let cmd = this.currentCommand();
-      if (cmd.skipTarget) {
-        this._index = cmd.skipTarget;
-      } else {
-        while (this._list[this._index + 1].indent > this._indent) {
-          this._index += 1;
-        }
-        cmd.skipTarget = this._index;
+      const command = this.currentCommand();
+      const next = skipProp.get(command);
+      if (next !== null) {
+        this._index = next;
+        return;
       }
+      while (this._list[this._index + 1].indent > this._indent) {
+        this._index += 1;
+      }
+      skipProp.set(command, this._index);
     },
   }));
 
@@ -260,22 +289,6 @@
     },
   }));
 
-  //113 ループの中断 補助関数
-  const searchBreakPoint = (now, list) => {
-    let depth = 0;
-    let i = now;
-    while (now < list.length - 1) {
-      i++;
-      if (list[i].code === 112) depth++;
-      if (list[i].code === 413) {
-        depth--;
-        if (depth <= 0) break;
-      }
-    }
-    jumpProp.set(list[now], i);
-    return i;
-  };
-
   //ラベルジャンプの補助関数
   //ラベル記録用のMapを作る（数が少ないなら配列が有利かもしれない）
   const makeLabelMap = (list) => {
@@ -290,29 +303,10 @@
     return map;
   };
 
-  //ラベルジャンルの補助関数
-  const searchLabel = (lastIndex, nowIndent, list, labelName) => {
-    const command = list[lastIndex];
-
-    //記録がない場合
-    let map = labelProp.get(list) ?? makeLabelMap(list); //ラベルマップの取得(なければ作る)
-    const matagi = [];
-    let jumpPoint = map.get(labelName) ?? lastIndex + 1; //ラベルが存在しない時は次へ
-    const startIndex = Math.min(jumpPoint, lastIndex);
-    const endIndex = Math.max(jumpPoint, lastIndex);
-
-    let indent = nowIndent;
-    for (let i = startIndex; i <= endIndex; i++) {
-      const newIndent = list[i].indent;
-      if (newIndent !== indent) {
-        matagi.push(indent);
-        indent = newIndent;
-      }
+  //ラベルジャンプ用、またぎ処理
+  const matagiFunc = (interpreter, params) => {
+    for (const indent of params[0]) {
+      interpreter._branch[indent] = null;
     }
-    //必要な処理を記録
-    jumpProp.set(command, jumpPoint);
-    jumpMatagiProp.set(command, matagi);
-
-    return jumpPoint;
   };
 }

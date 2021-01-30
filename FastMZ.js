@@ -56,6 +56,23 @@
  * @text 条件分岐・ラベルジャンプ等の高速化
  * @desc フロー制御関係の処理を高速化します。コマンド数の多いイベント、ループ回数が多い場合に効果を発揮。
  *
+ * @command timerstart
+ * @text 処理時間の測定開始
+ * @desc performance.now() を使った時間計測を始めます。
+ *
+ * @command timerstop
+ * @text 処理時間の測定終了してメッセージ表示
+ * @desc 測定時間をメッセージウィンドウに表示。メッセージ関係を改変するプラグインあると動かないかも。
+ *
+ * @command timerstop_string
+ * @text 測定時間を指定した変数に記録
+ * @desc 測定結果を文字列として変数に保存します。あとでまとめて表示したり、加工したい時用。
+ *
+ * @arg variable
+ * @type variable
+ * @text 保存用の変数を指定
+ * @desc 測定結果を保存する変数を指定してください。
+ *
  * @help 変数操作やスクリプトのイベントを色々高速化するプラグインです。
  *
  * 実際に使ってみて速度の確認がしやすいように、プラグインコマンドでONOFFできるようにしてあります。
@@ -119,30 +136,60 @@
  *
  */
 
-("use strict");
+"use strict";
 {
+  //プラグインの初期化---------------------------------------------------------------------------------
   //import Fs.js
   // eslint-disable-next-line no-undef
-  const { P, M, N, Z } = Fs;
+  const { P, Z } = Fs;
   const pluginName = Z.pluginName();
 
   //有効
   let enableFastEval = true;
   let enableSkip = true;
 
+  //有効無効の設定
   PluginManager.registerCommand(pluginName, "set", (args) => {
-    enableFastEval = args.fasteval === "true";
-    enableSkip = args.fastskip === "true";
+    enableFastEval = P.parse(args["fasteval"], P.boolean);
+    enableSkip = P.parse(args["fastskip"], P.boolean);
   });
 
-  //汎用のeval高速化-------------------------------------------------------------
-  //スクリプトの文字列自体をキーにして、一度生成した関数を保存する
-  //objectだと使えない文字とかあって都合が悪いのでMapを使用
+  //処理時間計測用
+  PluginManager.registerCommand(pluginName, "timerstart", () => {
+    timerStart();
+  });
+
+  //処理時間計測終了_メッセージ版
+  PluginManager.registerCommand(pluginName, "timerstop", function () {
+    //メッセージウィンドウの呼び出し
+    $gameMessage.add(String(timerStop()));
+    this.setWaitMode("message");
+  });
+
+  //処理時間計測終了_文字列版
+  //あとでまとめて表示するとかしたい時用
+  PluginManager.registerCommand(pluginName, "timerstop_string", (args) => {
+    const v = P.parse(args["variable"], P.withDefault(P.integer, 0));
+    if (v > 0) $gameVariables.setValue(v, String(timerStop()));
+  });
+  //----------------------------------------------------------------------------------------------------
+
+  //処理速度測定用関数----------------------------------------------------------------------------------
+  let startTime = 0;
+  const timerStart = () => (startTime = performance.now());
+  const timerStop = () => performance.now() - startTime;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const timerStopConsole = () => console.log(performance.now() - startTime);
+  //----------------------------------------------------------------------------------------------------
+
+  //evalの高速化------------------------------------------------------------------------------------
   const fastEvalCache = new Map();
   const fastEval = (script) => {
+    //evalではなくnew Functionを使う
+    //一度生成済みの関数は捨てずに使い回す
+    //別の場所から呼ばれても、コードが一致してればOK
     let f = fastEvalCache.get(script);
-    //元のeval関数を上書き
-    if (f === undefined) {
+    if (f === void 0) {
       f = new Function(script);
       fastEvalCache.set(script, f);
     }
@@ -181,7 +228,7 @@
 
       const now = this._index;
       const fastJumpPoint = this._list[now].fastJumpPoint;
-      if (fastJumpPoint !== undefined) {
+      if (fastJumpPoint !== void 0) {
         this._index = fastJumpPoint;
       } else {
         let depth = 0;
@@ -208,7 +255,7 @@
       if (!enableSkip) return base(this).command119(params);
 
       const fastJumpPoint = this._list[this._index].fastJumpPoint;
-      if (fastJumpPoint !== undefined) {
+      if (fastJumpPoint !== void 0) {
         const fastJump = this._list[this._index].fastJump;
         for (const indent of fastJump) {
           this._branch[indent] = null;
@@ -217,7 +264,7 @@
       } else {
         const labelName = params[0];
         const jumpPoint = this.labelMap.get(labelName);
-        if (jumpPoint !== undefined) {
+        if (jumpPoint !== void 0) {
           fastJumpTo(this, jumpPoint);
         }
       }
@@ -256,7 +303,7 @@
 
       const command = this.currentCommand();
       const fastJumpPoint = command.fastJumpPoint;
-      if (fastJumpPoint !== undefined) {
+      if (fastJumpPoint !== void 0) {
         this._index = fastJumpPoint;
       } else {
         do {
@@ -267,8 +314,7 @@
       return true;
     },
     skipBranch() {
-      //ループ脱出などで汎用的に使われる処理のスキップ
-      //下方向に向かって、インデントが浅くなるところまで進む
+      //ループ脱出などで汎用的に使われる、処理のスキップ
       //スキップのたびに行き先を探すのは無駄な気がするので、1回調べたら後はそのまま
       if (!enableSkip) return base(this).skipBranch();
 

@@ -127,7 +127,8 @@
     }
     return f;
   };
-  globalThis.fastEval = fastEval; //外からでも使えるようにしてみる
+  //これを有効化すると外からでも使えるはず
+  //globalThis.fastEval = fastEval;
 
   //Game_System
   //関数のテーブル化

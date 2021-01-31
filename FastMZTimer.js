@@ -6,7 +6,7 @@
 // http://opensource.org/licenses/mit-license.php
 // ----------------------------------------------------------------------------
 // Version
-// 1.0.0 2021/01/30 初版
+// 1.0.0 2021/01/31 初版
 // ----------------------------------------------------------------------------
 // [Twitter]: https://twitter.com/unaunagi1/
 // [GitHub] : https://github.com/unaunagi/
@@ -15,6 +15,7 @@
  * @plugindesc FastMZ Timer
  * @target MZ
  * @author unaunagi
+ * @url https://github.com/unaunagi/FastMZ
  *
  * @command timerstart
  * @text Timer start
@@ -39,6 +40,7 @@
  * @plugindesc FastMZ Timer 処理時間測定用
  * @target MZ
  * @author うなうなぎ
+ * @url https://github.com/unaunagi/FastMZ
  *
  * @command timerstart
  * @text 処理時間の測定開始
@@ -62,7 +64,6 @@
  * 単位はミリ秒で、1000ミリ秒=1秒です。
  *
  * 他のプラグインに依存せず、単体で導入できるプラグインです。
- *
  *
  * ■利用規約
  *

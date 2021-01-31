@@ -164,22 +164,13 @@
     executeCommand() {
       if (!enableSkip) return base(this).executeCommand();
 
-      //前処理済みのコマンドを統一的に扱う
-      //指定した場所にジャンプして、指定したパラメータを関数に渡す
-      const [next, func, ...params] = commandProp.get(this.currentCommand());
-      if (next !== null) {
-        this._index = next + 1;
-        func?.(this, params);
-        return true;
-      }
-      //それ以外の場合は従来通りにコマンド実行
       return base(this).executeCommand();
     },
     command113() {
       //ループの中断
       if (!enableSkip) return base(this).command113();
+      if (fastCommand(this)) return true; //commandProp対応
 
-      //commandProp対応
       let depth = 0;
       let i = this._index;
       while (i < this._list.length - 1) {
@@ -197,8 +188,8 @@
     command119(params) {
       //ラベルに向かってジャンプ！
       if (!enableSkip) return base(this).command119(params);
+      if (fastCommand(this)) return true; //commandProp対応
 
-      //commandProp対応
       const list = this._list;
       const command = list[this._index];
       const map = labelProp.get(list) ?? makeLabelMap(list); //ラベルマップの取得(なければ作る)
@@ -227,8 +218,8 @@
     command355() {
       //スクリプトイベント
       if (!enableFastEval) return base(this).command355();
+      if (fastCommand(this)) return true; //commandProp対応
 
-      //commandProp対応
       //文字列の結合と評価は1度だけにする
       const command = this.currentCommand();
       //最初の1回だけ。2回目からはcommandPropの中身が実行される
@@ -245,8 +236,8 @@
     command413() {
       //ループ処理などで元に戻る時に使われる関数
       if (!enableSkip) return base(this).command413();
+      if (fastCommand(this)) return true; //commandProp対応
 
-      //commandProp対応
       const command = this.currentCommand();
       do {
         this._index -= 1;
@@ -289,7 +280,22 @@
     },
   }));
 
-  //ラベルジャンプの補助関数
+  //CommandProp対応関数を高速実行する仕組み
+  const fastCommand = (interpreter) => {
+    //前処理済みのコマンドを統一的に扱う
+    //指定した場所にジャンプして、指定したパラメータを関数に渡す
+    //データがなかったらfalseで戻る
+    const [next, func, ...params] = commandProp.get(
+      interpreter.currentCommand()
+    );
+    if (next !== null) {
+      interpreter._index = next;
+      func?.(interpreter, params);
+      return true;
+    }
+    return false;
+  };
+
   //ラベル記録用のMapを作る（数が少ないなら配列が有利かもしれない）
   const makeLabelMap = (list) => {
     //command.codeが118の場合、ラベル名(parameters[0])とindexをペアにして記録
@@ -303,7 +309,7 @@
     return map;
   };
 
-  //ラベルジャンプ用、またぎ処理
+  //ラベルジャンプ用のインデントまたぎ処理
   const matagiFunc = (interpreter, params) => {
     for (const indent of params[0]) {
       interpreter._branch[indent] = null;

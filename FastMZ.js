@@ -127,12 +127,11 @@
   const { P, Z } = Fs;
   const pluginName = Z.pluginName();
 
-  //有効
+  //プラグインコマンド---------------------------------------------------------------------------------
+  //有効無効の設定
   let enableFastEval = true;
   let enableSkip = true;
 
-  //プラグインコマンド---------------------------------------------------------------------------------
-  //有効無効の設定
   PluginManager.registerCommand(pluginName, "set", (args) => {
     enableFastEval = P.parse(args["fasteval"], P.boolean);
     enableSkip = P.parse(args["fastskip"], P.boolean);
@@ -145,6 +144,10 @@
   const commandProp = Z.extProp([null, null]); //[次の行き先整数、実行関数]の組。パラメータを追加すると関数に渡す。commandごとに
   const skipProp = Z.extProp(null); //次の行き先を整数示す整数。commandごとに。skipBranch用
   //----------------------------------------------------------------------------------------------------
+
+  //command***実行用のテーブル
+  let isCommandTable = false;
+  let commandTable = Array(1000).fill(null);
 
   //evalの高速化
   const fastEval = (script) => {
@@ -164,7 +167,23 @@
     executeCommand() {
       if (!enableSkip) return base(this).executeCommand();
 
-      return base(this).executeCommand();
+      //関数のテーブル化
+      //テーブル最初のexecuteCommandで作る
+      //本当はもっと早い段階で作った方が条件分岐減らせる
+      //でも早すぎても駄目で、プラグインを全部読み込んだ後に作りたい
+      if (!isCommandTable) makeCommandTable();
+
+      const command = this.currentCommand();
+      if (command) {
+        this._indent = command.indent;
+        const commandMethod = commandTable[command.code];
+        const result = commandMethod?.call(this, command.parameters) ?? true;
+        if (!result) return false;
+        this._index++;
+      } else {
+        this.terminate();
+      }
+      return true;
     },
     command113() {
       //ループの中断
@@ -279,6 +298,20 @@
       }
     },
   }));
+
+  //コマンド実行時に毎回文字連結とかしたくないので、関数配列として作る
+  const makeCommandTable = () => {
+    const p = Game_Interpreter.prototype;
+    commandTable = commandTable.map((value, index) => {
+      const methodName = "command" + index;
+      if (typeof p[methodName] === "function") {
+        return p[methodName];
+      } else {
+        return null;
+      }
+    });
+    isCommandTable = true;
+  };
 
   //CommandProp対応関数を高速実行する仕組み
   const fastCommand = (interpreter) => {

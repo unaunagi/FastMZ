@@ -129,16 +129,21 @@
   };
   globalThis.fastEval = fastEval; //外からでも使えるようにしてみる
 
+  //Game_System
+  //関数のテーブル化
+  //速いうちに済ませたいけど、早すぎても駄目で
+  //プラグインを全部読み込んだ後に作りたい……ということでここに持ってきてみた
+  Z.redef(Game_System.prototype, (base) => ({
+    initialize() {
+      base(this).initialize();
+      if (!isCommandTable) makeCommandTable();
+    },
+  }));
+
   //Game_Interpreter
   Z.redef(Game_Interpreter.prototype, (base) => ({
     executeCommand() {
       if (!enableSkip) return base(this).executeCommand();
-
-      //関数のテーブル化
-      //テーブル最初のexecuteCommandで作る
-      //本当はもっと早い段階で作った方が条件分岐減らせる
-      //でも早すぎても駄目で、プラグインを全部読み込んだ後に作りたい
-      if (!isCommandTable) makeCommandTable();
 
       const command = this.currentCommand();
       if (command) {

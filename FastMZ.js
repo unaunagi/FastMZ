@@ -113,8 +113,10 @@
   //----------------------------------------------------------------------------------------------------
 
   //command***実行用のテーブル
+  //とりあえず999まで作っておく
   let isCommandTable = false;
   let commandTable = Array(1000).fill(null);
+  let trueFunc = () => true;
 
   //evalの高速化
   const fastEval = (script) => {
@@ -150,7 +152,7 @@
       if (command) {
         this._indent = command.indent;
         const commandMethod = commandTable[command.code];
-        const result = commandMethod?.call(this, command.parameters) ?? true;
+        const result = commandMethod.call(this, command.parameters);
         if (!result) return false;
         this._index++;
       } else {
@@ -272,7 +274,8 @@
     },
   }));
 
-  //コマンド実行時に毎回文字連結とかしたくないので、関数配列として作る
+  //コマンド実行時に毎回文字連結とかしたくないので、事前に関数表を作る
+  //これがあれば最速で関数を呼び出せるはず
   const makeCommandTable = () => {
     const p = Game_Interpreter.prototype;
     commandTable = commandTable.map((value, index) => {
@@ -280,7 +283,7 @@
       if (typeof p[methodName] === "function") {
         return p[methodName];
       } else {
-        return null;
+        return trueFunc;
       }
     });
     isCommandTable = true;

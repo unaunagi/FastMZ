@@ -18,17 +18,20 @@
  * @target MZ
  * @author unaunagi
  * @url https://github.com/unaunagi/FastMZ
- *
- * @arg fasteval
- * @type boolean
- * @text Eval to new Function
- *
  * @base Fs
  * @orderAfter Fs
  *
- * @arg fastskip
- * @type boolean
- * @text IF,While,Jump...
+ * @command set
+ * @text FastMZ Setting
+ * @desc Toggles between enabled and disabled. Enabled by default.
+ *
+ *    @arg fasteval
+ *    @type boolean
+ *    @text Eval to new Function
+ *
+ *    @arg fastskip
+ *    @type boolean
+ *    @text IF,While,Jump...
  *
  * @help This plugin will speed up your game!
  *
@@ -52,15 +55,15 @@
  * @text FastMZによる高速化の設定
  * @desc 各機能を有効にするか無効にするか、ゲーム中から設定ができます。デフォルトだと有効です。
  *
- * @arg fasteval
- * @type boolean
- * @text スクリプトイベントの高速化
- * @desc イベントコマンド「スクリプト」と、移動ルートの設定の「スクリプト」を高速化します。
+ *    @arg fasteval
+ *    @type boolean
+ *    @text スクリプトイベントの高速化
+ *    @desc イベントコマンド「スクリプト」と、移動ルートの設定の「スクリプト」を高速化します。
  *
- * @arg fastskip
- * @type boolean
- * @text 条件分岐・ラベルジャンプ等の高速化
- * @desc フロー制御関係の処理を高速化します。コマンド数の多いイベント、ループ回数が多い場合に効果を発揮。
+ *    @arg fastskip
+ *    @type boolean
+ *    @text 条件分岐・ラベルジャンプ等の高速化
+ *    @desc フロー制御関係の処理を高速化します。コマンド数の多いイベント、ループ回数が多い場合に効果を発揮。
  *
  * @help RPGツクールMZ製ゲームを高速化するプラグインです。
  *
@@ -294,9 +297,8 @@
     //前処理済みのコマンドを統一的に扱う
     //指定した場所にジャンプして、指定したパラメータを関数に渡す
     //データがなかったらfalseで戻る
-    const [next, func, ...params] = commandProp.get(
-      interpreter.currentCommand()
-    );
+    const command = interpreter.currentCommand();
+    const [next, func, ...params] = commandProp.get(command);
     if (next !== null) {
       interpreter._index = next;
       func?.(interpreter, params);

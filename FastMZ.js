@@ -152,13 +152,12 @@
     isGameActive() {
       //速度差自体は大きいけど、実行回数が少ないから大して影響はなかった
       //とはいえ毎回try catchすることはないだろうと思うので……
-      return !canTopAccessible || document.top.document.hasFocus();
+      return !canTopAccessible || window.top.document.hasFocus();
     },
   }));
 
   //Game_System
-  //関数のテーブル化
-  //速いうちに済ませたいけど、早すぎても駄目で
+  //関数のテーブル化は速いうちに済ませたいけど、早すぎても駄目
   //プラグインを全部読み込んだ後に作りたい……ということでここに持ってきた
   Z.redef(Game_System.prototype, (base) => ({
     initialize() {

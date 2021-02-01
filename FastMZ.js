@@ -135,10 +135,31 @@
   //これを有効化すると外からでも使えるはず
   //globalThis.fastEval = fastEval;
 
+  //window.topが使用できるかどうかを最初に一度だけ確かめる
+  const isTopAccessible = () => {
+    try {
+      window.top.location;
+      return true;
+    } catch (err) {
+      return false;
+    }
+  };
+  const canTopAccessible = isTopAccessible();
+
+  //SceneManager
+  //プロトタイプではないので直接上書きする
+  Z.redef(SceneManager, () => ({
+    isGameActive() {
+      //速度差自体は大きいけど、実行回数が少ないから大して影響はなかった
+      //とはいえ毎回try catchすることはないだろうと思うので……
+      return !canTopAccessible || document.top.document.hasFocus();
+    },
+  }));
+
   //Game_System
   //関数のテーブル化
   //速いうちに済ませたいけど、早すぎても駄目で
-  //プラグインを全部読み込んだ後に作りたい……ということでここに持ってきてみた
+  //プラグインを全部読み込んだ後に作りたい……ということでここに持ってきた
   Z.redef(Game_System.prototype, (base) => ({
     initialize() {
       base(this).initialize();

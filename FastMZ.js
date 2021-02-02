@@ -8,6 +8,7 @@
 // Version
 // 1.0.0 2021/01/28 初版
 // 1.1.0 2021/01/31 もっと速くした
+// 1.2.0 2021/02/02 もうちょっとだけ速くして、英語用アノテーションの修正
 // ----------------------------------------------------------------------------
 // [Twitter]: https://twitter.com/unaunagi1/
 // [GitHub] : https://github.com/unaunagi/
@@ -138,7 +139,7 @@
   //window.topが使用できるかどうかを最初に一度だけ確かめる
   const isTopAccessible = () => {
     try {
-      window.top.location;
+      window.top.document.hasFocus();
       return true;
     } catch (err) {
       return false;
@@ -152,7 +153,7 @@
     isGameActive() {
       //速度差自体は大きいけど、実行回数が少ないから大して影響はなかった
       //とはいえ毎回try catchすることはないだろうと思うので……
-      return !canTopAccessible || window.top.document.hasFocus();
+      return (!canTopAccessible) || window.top.document.hasFocus();
     },
   }));
 

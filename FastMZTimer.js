@@ -7,6 +7,7 @@
 // ----------------------------------------------------------------------------
 // Version
 // 1.0.0 2021/01/31 初版
+// 1.0.1 2021/02/02 表示をもう少しわかりやすくした
 // ----------------------------------------------------------------------------
 // [Twitter]: https://twitter.com/unaunagi1/
 // [GitHub] : https://github.com/unaunagi/
@@ -87,6 +88,7 @@
   //処理時間計測終了_メッセージ版
   PluginManager.registerCommand(pluginName, "timerstop", function () {
     //メッセージウィンドウの呼び出し
+    $gameMessage.add("計測結果(単位 ミリ秒)");
     $gameMessage.add(String(timerStop()));
     this.setWaitMode("message");
   });

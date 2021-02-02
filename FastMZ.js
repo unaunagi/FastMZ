@@ -153,7 +153,7 @@
     isGameActive() {
       //速度差自体は大きいけど、実行回数が少ないから大して影響はなかった
       //とはいえ毎回try catchすることはないだろうと思うので……
-      return (!canTopAccessible) || window.top.document.hasFocus();
+      return !canTopAccessible || window.top.document.hasFocus();
     },
   }));
 
@@ -178,10 +178,36 @@
         const commandMethod = commandTable[command.code];
         const result = commandMethod.call(this, command.parameters);
         if (!result) return false;
-        this._index++;
+        this._index += 1;
       } else {
         this.terminate();
       }
+      return true;
+    },
+    command108(params) {
+      //コメント文
+      //連続したコメントを一気に飛ばす
+      //this._commentsを無視してよければもう少し簡素化出来るけど
+      //使うプラグインもあるかもしれないので、最後のコメントの文字列は残す
+      if (!enableSkip) return base(this).command108(params);
+      if (fastCommand(this)) return true; //commandProp対応
+
+      const command = this.currentCommand();
+      const comments = [params[0]];
+      while (this._index < this._list.length) {
+        const nextEventCode = this.nextEventCode();
+        if (nextEventCode === 408) {
+          comments.push(this.currentCommand().parameters[0]);
+        } else if (nextEventCode === 108) {
+          comments.splice(0);
+          comments.push(this.currentCommand().parameters[0]);
+        } else {
+          break;
+        }
+        this._index += 1;
+      }
+      commandProp.set(command, [this._index, commentFunc, comments]);
+      this._comments = comments;
       return true;
     },
     command113() {
@@ -346,5 +372,10 @@
     for (const indent of params[0]) {
       interpreter._branch[indent] = null;
     }
+  };
+
+  //コメント
+  const commentFunc = (interpreter, params) => {
+    interpreter._comment = params[0];
   };
 }

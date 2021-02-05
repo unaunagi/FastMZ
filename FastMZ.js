@@ -9,6 +9,7 @@
 // 1.0.0 2021/01/28 初版
 // 1.1.0 2021/01/31 もっと速くした
 // 1.2.0 2021/02/02 もうちょっとだけ速くして、英語用アノテーションの修正
+// 1.3.0 2021/02/05 イベントスクリプトから、thisでGame_Interpreterにアクセス出来るようにした
 // ----------------------------------------------------------------------------
 // [Twitter]: https://twitter.com/unaunagi1/
 // [GitHub] : https://github.com/unaunagi/
@@ -272,7 +273,8 @@
         this._index++;
         script += this.currentCommand().parameters[0] + "\n";
       }
-      const f = fastEval(script);
+      //const f = fastEval(script);
+      const f = fastEval(script).bind(this);
       f();
       commandProp.set(command, [this._index, f]);
       return true;
@@ -316,7 +318,7 @@
       const gc = Game_Character;
       const params = command.parameters;
       if (command.code == gc.ROUTE_SCRIPT) {
-        fastEval(params[0])();
+        fastEval(params[0]).call(this);
         return true;
       } else {
         return base(this).processMoveCommand(command);
